@@ -1,0 +1,55 @@
+import pandas as pd
+import numpy as np
+import re
+import string
+from sklearn.model_selection import train_test_split
+from sklearn.linear_model import LogisticRegression
+from sklearn.metrics import accuracy_score
+from gensim.models import KeyedVectors
+from nltk.corpus import stopwords
+from nltk.tokenize import word_tokenize
+import nltk
+
+nltk.download('punkt')
+nltk.download('stopwords')
+
+df = pd.read_csv("spam.csv", encoding='latin-1')[['v1', 'v2']]
+df.columns = ['Label', 'Message']
+
+def preprocess(text):
+    text = text.lower()
+    text = re.sub(rf"[{string.punctuation}]", "", text)
+    tokens = word_tokenize(text)
+    tokens = [word for word in tokens if word not in stopwords.words('english')]
+    return tokens
+
+df['Tokens'] = df['Message'].apply(preprocess)
+
+w2v_model = KeyedVectors.load_word2vec_format("GoogleNews-vectors-negative300.bin.gz", binary=True)
+
+def vectorize(tokens):
+    vectors = [w2v_model[word] for word in tokens if word in w2v_model]
+    if not vectors:
+        return np.zeros(300)
+    return np.mean(vectors, axis=0)
+
+df['Vector'] = df['Tokens'].apply(vectorize)
+
+X = np.vstack(df['Vector'].values)
+y = df['Label'].map({'ham': 0, 'spam': 1}).values
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+
+model = LogisticRegression(max_iter=1000)
+model.fit(X_train, y_train)
+y_pred = model.predict(X_test)
+accuracy = accuracy_score(y_test, y_pred)
+print("Test Accuracy:", accuracy)
+
+def predict_message_class(model, w2v_model, message):
+    tokens = preprocess(message)
+    vector = vectorize(tokens)
+    prediction = model.predict([vector])[0]
+    return 'spam' if prediction == 1 else 'ham'
+
+example_msg = "Congratulations! You've won a $1000 Walmart gift card. Click here to claim now."
+print("Predicted:", predict_message_class(model, w2v_model, example_msg))
