@@ -1,0 +1,69 @@
+import pandas as pd
+import numpy as np
+import re
+import string
+import nltk
+from nltk.corpus import stopwords, wordnet
+from nltk.tokenize import word_tokenize
+from nltk.stem import WordNetLemmatizer
+from sklearn.model_selection import train_test_split
+from sklearn.linear_model import LogisticRegression
+from sklearn.metrics import accuracy_score
+from gensim.models import KeyedVectors
+import contractions
+import emoji
+
+nltk.download('punkt')
+nltk.download('stopwords')
+nltk.download('wordnet')
+nltk.download('omw-1.4')
+
+
+df = pd.read_csv("Tweets.csv")[['airline_sentiment', 'text']]
+
+lemmatizer = WordNetLemmatizer()
+stop_words = set(stopwords.words('english'))
+
+def clean_tweet(text):
+    text = text.lower()
+    text = contractions.fix(text)
+    text = re.sub(r'http\S+|www\S+|https\S+', '', text)  
+    text = re.sub(r'@[A-Za-z0-9_]+', '', text) 
+    text = re.sub(r'#', '', text)
+    text = emoji.replace_emoji(text, "")  
+    text = re.sub(rf"[{string.punctuation}]", "", text) 
+    tokens = word_tokenize(text)
+    tokens = [lemmatizer.lemmatize(t) for t in tokens if t not in stop_words]
+    return tokens
+
+df['Tokens'] = df['text'].apply(clean_tweet)
+
+w2v_model = KeyedVectors.load_word2vec_format("GoogleNews-vectors-negative300.bin.gz", binary=True)
+
+def vectorize(tokens):
+    vecs = [w2v_model[word] for word in tokens if word in w2v_model]
+    if not vecs:
+        return np.zeros(300)
+    return np.mean(vecs, axis=0)
+
+df['Vector'] = df['Tokens'].apply(vectorize)
+
+X = np.vstack(df['Vector'].values)
+y = df['airline_sentiment'].map({'negative': 0, 'neutral': 1, 'positive': 2}).values
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+
+model = LogisticRegression(max_iter=1000, multi_class='multinomial')
+model.fit(X_train, y_train)
+
+y_pred = model.predict(X_test)
+acc = accuracy_score(y_test, y_pred)
+print("Test Accuracy:", acc)
+
+def predict_tweet_sentiment(model, w2v_model, tweet):
+    tokens = clean_tweet(tweet)
+    vector = vectorize(tokens)
+    pred = model.predict([vector])[0]
+    return {0: 'negative', 1: 'neutral', 2: 'positive'}[pred]
+
+sample = "I love the service provided by this airline!"
+print("Predicted Sentiment:", predict_tweet_sentiment(model, w2v_model, sample))
